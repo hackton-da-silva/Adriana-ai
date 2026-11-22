@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { AgoraClient, Area } from 'agora-agents';
+import { finishPostmortem, getPostmortemSession, recordPostmortemEvent } from '@/lib/postmortem';
 import { StopConversationRequest } from '@/types/conversation';
 
 function isAgentAlreadyStoppingOrStopped(error: unknown): boolean {
@@ -23,6 +24,11 @@ function isAgentAlreadyStoppingOrStopped(error: unknown): boolean {
 }
 
 export async function POST(request: Request) {
+  const capability = request.headers.get('X-Postmortem-Token');
+  const postmortem = getPostmortemSession(capability);
+  if (capability && !postmortem) return NextResponse.json({ error: 'Sessão inválida.' }, { status: 401 });
+  let matched = false;
+  let stopFailed = false;
   try {
     const body: StopConversationRequest = await request.json();
     const { agent_id } = body;
@@ -34,6 +40,8 @@ export async function POST(request: Request) {
       );
     }
 
+    if (postmortem && postmortem.agentId !== agent_id) return NextResponse.json({ error: 'Sessão inválida.' }, { status: 403 });
+    matched = Boolean(postmortem);
     const appId = process.env.NEXT_PUBLIC_AGORA_APP_ID;
     const appCertificate = process.env.NEXT_AGORA_APP_CERTIFICATE;
     if (!appId || !appCertificate) {
@@ -60,6 +68,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    stopFailed = true;
     console.error('Error stopping conversation:', error);
     return NextResponse.json(
       {
@@ -70,5 +79,10 @@ export async function POST(request: Request) {
       },
       { status: 500 },
     );
+  } finally {
+    if (postmortem && matched) {
+      recordPostmortemEvent(postmortem.traceId, 'agora.stop', { status: stopFailed ? 'failed' : 'accepted' });
+      finishPostmortem(postmortem, 'operator_ended');
+    }
   }
 }

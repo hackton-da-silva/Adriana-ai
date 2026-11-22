@@ -48,6 +48,7 @@ Do not recreate Agora ConvoAI integration from memory. Provider schemas, SDK bui
 - `api.routes`: add browser-facing routes under `app/api`, with shared request/response types in `types/conversation.ts` when the client consumes them.
 - `prompts.system`: edit `ADA_PROMPT` and `GREETING` in `app/api/invite-agent/route.ts`.
 - `pipeline.providers`: adjust the `DeepgramSTT`, `OpenAI`, and `MiniMaxTTS` builder chain, or enable the commented BYOK blocks.
+- `api.routes`: the optional local postmortem journal extends invite with a separate capability and stop with an optional matching capability header; the original stop body remains stable.
 - `ui.conversation`: customize `QuickstartPreCallCard`, `QuickstartConversationLayout`, `QuickstartTranscriptPanel`, and `QuickstartPipelineMetrics`.
 - The local visual lab uses `LtqWorkspace` at `/`, `VisualWorkbench` for person-test/LTQ tabs, and the unmodified voice lifecycle at `/voice`. `VisualDetector` in `lib/visual-detection.ts` is the replacement seam for future industrial detectors: normalized bounding boxes, confidence, and labels. The current local COCO-SSD adapter detects people. The conversation offers opt-in RTC camera sharing for the multimodal LLM. The local visual overlays remain separate.
 

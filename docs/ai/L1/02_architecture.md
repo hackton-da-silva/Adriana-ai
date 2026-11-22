@@ -114,3 +114,7 @@ The optional Langfuse exporter correlates Agora invite, browser microphone/trans
 ### Retry e fallback Feita
 
 Configure `FEITA_API_KEY` no servidor para ativar a Feita como fallback do manual e da análise de câmera. O adaptador em `lib/ai-provider.ts` faz até duas novas tentativas por provedor em falhas transitórias, com backoff exponencial (200 ms, 400 ms) e jitter de até 149 ms, respeitando Retry-After e o prazo total. Se a OpenAI falhar, a Feita recebe a pergunta e os trechos recuperados ou o quadro solicitado. O modelo padrão é `qwen/qwen4-max`, configurável por `FEITA_MODEL`. Para embeddings, o fallback continua sendo a busca por BM25. A voz usa o Agora.
+
+## Post-call reporting
+
+Invite creates an independent capability and journal correlated by trace ID. usePostmortem batches completed/interrupted turns and diagnostics while the server journals manual/vision/plant tool results separately from Langfuse. Stop seals the matching session and queues a bounded asynchronous generator; pagehide or two-minute heartbeat inactivity can also seal it. Up to two workers checkpoint JSON, request schema-validated analysis, and atomically write private Markdown/JSON under files/postmortems/. Provider failure produces a basic report with original evidence. Collection and queue are process-local; sealed sessions exclude later tool results.

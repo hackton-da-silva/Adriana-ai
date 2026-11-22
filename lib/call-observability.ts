@@ -1,3 +1,4 @@
+import { recordPostmortemEvent } from './postmortem';
 import { randomBytes } from 'node:crypto';
 
 export type CallTrace = { traceId: string; rootSpanId: string };
@@ -19,6 +20,7 @@ export function newCallTrace(): CallTrace {
 }
 
 export function traceCall(trace: CallTrace, observation: Observation) {
+  recordPostmortemEvent(trace.traceId, observation.name, { ...observation.input, ...observation.data, error: Boolean(observation.error), ...(observation.startedAt && { durationMs: Date.now() - observation.startedAt }) });
   const { LANGFUSE_BASE_URL: base, LANGFUSE_PUBLIC_KEY: publicKey, LANGFUSE_SECRET_KEY: secret } = process.env;
   if (!base || !publicKey || !secret) return;
   const end = Date.now();

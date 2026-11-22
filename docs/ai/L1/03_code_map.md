@@ -96,3 +96,12 @@ types/               Shared TypeScript route/component contracts
 `AgoraCameraShare.tsx` renders the frozen annotation frame. `useVisionAnnotation.ts` polls and captures the frame. `app/api/vision-annotation/route.ts` and `lib/vision-annotation-server.ts` bridge Agora, the browser and OpenAI.
 
 `lib/call-observability.ts` writes Langfuse OTLP observations. `components/useCallTelemetry.ts` and `app/api/call-telemetry/route.ts` collect authenticated microphone and completed-transcript state.
+
+## Postmortem ownership
+
+- lib/postmortem.ts: independent capabilities, bounded journal, inactivity sweep, generation queue and private file writes.
+- types/postmortem.ts: speaker/turn and report status types.
+- components/usePostmortem.ts: incremental collection, heartbeat, flush and pagehide.
+- components/PostmortemNotice.tsx: completion status, filenames and bounded retries.
+- app/api/postmortems/route.ts: authenticated status, collection and finalization.
+- scripts/verify-postmortems.ts: provider-mocked integration checks, included in verify:api.

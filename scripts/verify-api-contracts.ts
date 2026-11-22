@@ -1,3 +1,4 @@
+import { verifyPostmortems } from './verify-postmortems';
 import { AgoraClient, Agent } from 'agora-agents';
 import { RtcTokenBuilder } from 'agora-token';
 import { NextRequest } from 'next/server';
@@ -350,7 +351,7 @@ async function verifyInviteAgentSuccess() {
       'POST /api/invite-agent should return the started agent id',
     );
     assert(
-      body.state === 'RUNNING',
+      body.state === 'RUNNING' && typeof body.postmortem_token === 'string',
       'POST /api/invite-agent should return RUNNING state',
     );
     assert(
@@ -484,6 +485,7 @@ async function verifyPlantMcpRoutes() {
 }
 
 async function main() {
+  await verifyPostmortems();
   await verifyPlantMcpRoutes();
   await verifyGenerateAgoraTokenRoute();
   await verifyGenerateAgoraTokenReplacesZeroUid();

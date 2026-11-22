@@ -143,3 +143,6 @@ dist
 
 # Local Langfuse credentials
 /.langfuse/
+
+# Private local call reports
+/files/postmortems/

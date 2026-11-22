@@ -13,6 +13,7 @@ import { DEFAULT_AGENT_UID } from '@/lib/agora';
 import { createAnnotationSession } from '@/lib/vision-annotation-server';
 import { CONSULT_MAINTENANCE_MANUAL, createResearchSession } from '@/lib/document-research';
 import { plantMcpServers } from '@/lib/plant-mcp';
+import { createPostmortemSession } from '@/lib/postmortem';
 import { newCallTrace, traceCall } from '@/lib/call-observability';
 
 const MAINTENANCE_PROMPT = `Você é a assistente de manutenção da Unmute. Ajude o operador a entender o problema da máquina e a decidir o próximo passo para corrigi-lo.
@@ -37,6 +38,7 @@ function requireEnv(name: string): string {
 export async function POST(request: NextRequest) {
   const trace = newCallTrace();
   const startedAt = Date.now();
+  let postmortem: ReturnType<typeof createPostmortemSession>;
   let annotation: ReturnType<typeof createAnnotationSession>;
   let research: Awaited<ReturnType<typeof createResearchSession>>;
   try {
@@ -69,8 +71,9 @@ export async function POST(request: NextRequest) {
 
     // Pipeline: Deepgram (reseller) STT → OpenAI (reseller) LLM → MiniMax (reseller) TTS.
     // Omit vendor API keys for supported models — AgentKit infers reseller presets on start (see Agora Console / billing).
+    postmortem = createPostmortemSession(trace.traceId);
     annotation = createAnnotationSession(trace);
-    const plant = plantMcpServers();
+    const plant = plantMcpServers(postmortem?.toolToken);
     research = await createResearchSession(trace, plant.length > 0);
     const documentLanguage = process.env.RAG_DOCUMENT_LANGUAGE?.trim();
     const servers = research ? [...plant, research.server] : plant;
@@ -185,6 +188,7 @@ export async function POST(request: NextRequest) {
     });
 
     const agentId = await session.start();
+    postmortem?.bindAgent(agentId);
     research?.bindDelivery((result) => session.think(
       `Retorno da pesquisa no manual: ${JSON.stringify(result)}`,
       {
@@ -204,11 +208,13 @@ export async function POST(request: NextRequest) {
       agent_id: agentId,
       create_ts: Math.floor(Date.now() / 1000),
       state: 'RUNNING',
+      ...(postmortem && { postmortem_token: postmortem.token }),
       ...(annotation && { annotation_token: annotation.token }),
       ...(research && { research_token: research.token }),
     } as AgentResponse);
   } catch (error) {
     traceCall(trace, { name: 'agora.invite', type: 'agent', root: true, startedAt, error: true, input: { operation: 'start_session' } });
+    postmortem?.discard();
     annotation?.discard();
     research?.discard();
     console.error('Error starting conversation:', error);

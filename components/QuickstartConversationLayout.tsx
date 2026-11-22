@@ -11,6 +11,7 @@ type QuickstartConversationLayoutProps = {
   visualizer: ReactNode;
   controls: ReactNode;
   onEndConversation: () => void;
+  isEnding?: boolean;
 };
 
 export function QuickstartConversationLayout({
@@ -20,6 +21,7 @@ export function QuickstartConversationLayout({
   visualizer,
   controls,
   onEndConversation,
+  isEnding = false,
 }: QuickstartConversationLayoutProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col text-left">
@@ -47,10 +49,11 @@ export function QuickstartConversationLayout({
             size="sm"
             className="h-8 rounded-md border border-destructive bg-transparent px-3 text-xs font-medium text-destructive hover:bg-destructive/10"
             onClick={onEndConversation}
+            disabled={isEnding}
             aria-label="Encerrar conversa com a IA"
             title="Encerrar conversa"
           >
-            Encerrar conversa
+            {isEnding ? 'Encerrando…' : 'Encerrar conversa'}
           </Button>
         </div>
       </header>

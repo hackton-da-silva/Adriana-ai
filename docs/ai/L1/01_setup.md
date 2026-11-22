@@ -114,3 +114,7 @@ This checkout is a local Portuguese voice conversation POC. The invite route use
 ### Mobile tunnel demo
 
 Build with `pnpm run build`, serve with `pnpm start --hostname 127.0.0.1 --port 3002`, then run `ngrok http 3002`. Use the emitted HTTPS URL on the phone, accept the ngrok informational page, and grant camera/microphone only through their separate controls. Keep both processes running; rebuild/restart after code changes. Local development remains on its original port (3001 in this session). This path avoids tunneling the dev runtime, which may block resources for an unconfigured origin. Tunnel URLs are temporary; do not hardcode one into the app.
+
+## Local postmortem setup
+
+New calls collect private postmortem evidence independently of RAG. Analysis reuses OPENAI_API_KEY and FEITA_API_KEY; optional OPENAI_POSTMORTEM_MODEL defaults to OPENAI_RAG_MODEL or gpt-5.4-mini. No provider produces a basic report. Require one continuously running Node process with write access to files/postmortems/. This local feature is not compatible with ephemeral serverless disk.

@@ -36,6 +36,8 @@ import { MicrophoneSelector } from './MicrophoneSelector';
 import { AgoraCameraShare } from './AgoraCameraShare';
 import { DocumentResearchPanel } from './DocumentResearchPanel';
 import { hasMaintenanceEquipment, isMaintenanceTurn } from '@/lib/maintenance-query';
+import { usePostmortem } from './usePostmortem';
+import type { PostmortemTurn } from '@/types/postmortem';
 import { useCallTelemetry } from './useCallTelemetry';
 import {
   getConversationIssueSeverity,
@@ -412,6 +414,31 @@ export default function ConversationComponent({
       : undefined,
   });
 
+  const postmortemTurns = useMemo<PostmortemTurn[]>(() => messageList.filter(item => item.text.trim()).map(item => ({
+    turn: item.turn_id,
+    speaker: String(item.uid) === String(client.uid) ? 'operator' : 'assistant',
+    status: String(item.status) === String(TurnStatus.INTERRUPTED) ? 'interrupted' : 'completed',
+    text: item.text.slice(0, 5000),
+    truncated: item.text.length > 5000,
+  })), [messageList, client.uid]);
+  const postmortemDiagnostics = useMemo(() => [
+    { name: 'rtc.connection', value: connectionState },
+    { name: 'transcript.in_progress', value: Boolean(currentInProgressMessage) },
+    { name: 'microphone.ready', value: Boolean(localMicrophoneTrack) },
+    { name: 'microphone.enabled', value: isEnabled },
+    { name: 'microphone.error', value: Boolean(microphoneError) },
+    { name: 'microphone.publish_failed', value: Boolean(publishError) },
+    ...agentMetrics.map(metric => ({ name: `metric.${metric.type}.${metric.name}.${metric.timestamp}`.slice(0, 80), value: metric.value })),
+    ...connectionIssues.map(issue => ({ name: `issue.${issue.id}`.slice(0, 80), value: `${issue.source}: ${issue.code}: ${issue.message}`.slice(0, 500) })),
+  ], [connectionState, currentInProgressMessage, localMicrophoneTrack, isEnabled, microphoneError, publishError, agentMetrics, connectionIssues]);
+  const preparePostmortem = usePostmortem({ token: agoraData.postmortemToken, turns: postmortemTurns, diagnostics: postmortemDiagnostics });
+  const [isEnding, setIsEnding] = useState(false);
+  const endWithPostmortem = async () => {
+    if (isEnding) return;
+    setIsEnding(true);
+    if (await preparePostmortem()) await onEndConversation();
+  };
+
   useClientEvent(client, 'user-joined', (user) => {
     if (user.uid.toString() === agentUID) setIsAgentConnected(true);
   });
@@ -498,10 +525,6 @@ export default function ConversationComponent({
 
   useClientEvent(client, 'token-privilege-will-expire', handleTokenWillExpire);
 
-  const handleEndConversation = useCallback(async () => {
-    onEndConversation();
-  }, [onEndConversation]);
-
   return (
     <QuickstartConversationLayout
       statusPanel={
@@ -570,7 +593,8 @@ export default function ConversationComponent({
           )}
         </>
       }
-      onEndConversation={handleEndConversation}
+      onEndConversation={endWithPostmortem}
+      isEnding={isEnding}
     />
   );
 }

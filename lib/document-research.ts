@@ -1,3 +1,4 @@
+import { recordPostmortemEvent } from './postmortem';
 import { requestManualAnswer, hasChatProvider } from './ai-provider';
 import { randomUUID } from 'node:crypto';
 import { documentExcerpts, loadDocumentIndex } from './document-rag';
@@ -106,6 +107,7 @@ export function startResearch(session: ResearchSession, input: string, searchTer
   const spanId = id.replaceAll('-', '').slice(0, 16);
   session.jobs.set(id, job);
   research.active++;
+  recordPostmortemEvent(session.trace.traceId, 'manual.queued', { id, query, fallback, status: 'pending' });
   setImmediate(async () => {
     const source = fallback ? 'transcript' : 'mcp';
     try {
@@ -147,6 +149,7 @@ export function startResearch(session: ResearchSession, input: string, searchTer
         error: job.result.status === 'failed', data: { jobId: id, source, status: job.result.status },
       });
     }
+    recordPostmortemEvent(session.trace.traceId, 'manual.result', { ...job.result, fallback, durationMs: Date.now() - job.startedAt });
     if (session.deliver) {
       try {
         await session.deliver(job.result);

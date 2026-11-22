@@ -7,6 +7,7 @@ export interface AgoraTokenData {
   agentId?: string;
   annotationToken?: string;
   researchToken?: string;
+  postmortemToken?: string;
 }
 
 export interface ClientStartRequest {
@@ -22,6 +23,7 @@ export interface AgentResponse {
   agent_id: string;
   annotation_token?: string;
   research_token?: string;
+  postmortem_token?: string;
   create_ts: number;
   state: string;
 }
@@ -35,5 +37,5 @@ export interface ConversationComponentProps {
   agoraData: AgoraTokenData;
   rtmClient: RTMClient;
   onTokenWillExpire: (uid: string) => Promise<AgoraRenewalTokens>;
-  onEndConversation: () => void;
+  onEndConversation: () => Promise<void>;
 }

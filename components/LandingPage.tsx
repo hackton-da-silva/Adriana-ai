@@ -10,6 +10,7 @@ import type {
   AgentResponse,
   AgoraRenewalTokens,
 } from '../types/conversation';
+import { PostmortemNotice } from './PostmortemNotice';
 import { ErrorBoundary } from './ErrorBoundary';
 import { LoadingSkeleton } from './LoadingSkeleton';
 import { QuickstartPreCallCard } from './QuickstartPreCallCard';
@@ -56,6 +57,7 @@ const AgoraProvider = dynamic(
 
 export default function LandingPage() {
   const [showConversation, setShowConversation] = useState(false);
+  const [lastPostmortemToken, setLastPostmortemToken] = useState<string>();
 
   // Preload heavy modules on mount so they're already cached when the user
   // clicks "Try it Now" — eliminates the ~1.8s dynamic-import delay.
@@ -136,6 +138,7 @@ export default function LandingPage() {
         agentId: agentData?.agent_id,
         annotationToken: agentData?.annotation_token,
         researchToken: agentData?.research_token,
+        postmortemToken: agentData?.postmortem_token,
       });
       setShowConversation(true);
     } catch (err) {
@@ -190,7 +193,8 @@ export default function LandingPage() {
         // console.log('Stopping agent:', agoraData.agentId);
         const response = await fetch('/api/stop-conversation', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(agoraData.postmortemToken && { 'X-Postmortem-Token': agoraData.postmortemToken }) },
+          signal: AbortSignal.timeout(10_000),
           body: JSON.stringify({ agent_id: agoraData.agentId }),
         });
         if (!response.ok) {
@@ -200,6 +204,15 @@ export default function LandingPage() {
       } catch (error) {
         console.error('Error stopping agent:', error);
       }
+    }
+
+    if (agoraData?.postmortemToken) {
+      setLastPostmortemToken(agoraData.postmortemToken);
+      // Also finalize if the stop request failed in transit. This is idempotent.
+      void fetch('/api/postmortems', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Postmortem-Token': agoraData.postmortemToken },
+        body: JSON.stringify({ action: 'finish', reason: 'operator_ended' }), keepalive: true,
+      }).catch(() => undefined);
     }
 
     // Tear down RTM — owned here since we created it here
@@ -226,11 +239,14 @@ export default function LandingPage() {
           }`}
         >
           {!showConversation ? (
-            <QuickstartPreCallCard
-              isLoading={isLoading}
-              error={error}
-              onStartConversation={handleStartConversation}
-            />
+            <>
+              {lastPostmortemToken && <PostmortemNotice key={lastPostmortemToken} token={lastPostmortemToken} />}
+              <QuickstartPreCallCard
+                isLoading={isLoading}
+                error={error}
+                onStartConversation={handleStartConversation}
+              />
+            </>
           ) : agoraData && rtmClient ? (
             <>
               {/* Non-fatal invite warning: the browser session can still render even if agent start failed. */}

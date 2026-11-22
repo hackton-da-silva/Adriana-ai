@@ -1,3 +1,4 @@
+import { recordPostmortemEvent } from './postmortem';
 import { hasChatProvider } from './ai-provider';
 export { describeCamera, locateObject } from './ai-provider';
 import { randomUUID } from 'node:crypto';
@@ -103,6 +104,7 @@ export async function requestAnnotation(session: Session, target: string, mode: 
   session.count += 1;
   const startedAt = Date.now();
   requests.push(startedAt);
+  recordPostmortemEvent(session.trace.traceId, 'vision.requested', { mode, target, status: 'pending' });
 
   return new Promise((resolve) => {
     const id = randomUUID();
@@ -116,6 +118,7 @@ export async function requestAnnotation(session: Session, target: string, mode: 
         input: { mode, targetCharacters: target.length, frameLimit: 1 },
         data: { status: result.status },
       });
+      recordPostmortemEvent(session.trace.traceId, 'vision.result', { target, mode, ...result });
       resolve(result);
     };
     const timer = setTimeout(() => complete({ status: 'timeout' }), 23_000);
