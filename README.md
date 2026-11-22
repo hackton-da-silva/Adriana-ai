@@ -1,288 +1,377 @@
-# Unmute — POC de voz com Agora
+# Unmute
 
-Converse pelo microfone com a IA e acompanhe a transcrição e latência ao vivo.
-Esta POC usa o pipeline gerenciado do Agora (Deepgram Nova-3 → GPT-4o mini → MiniMax), não um modelo speech-to-speech próprio do Agora.
-O reconhecimento de fala e as instruções estão em português brasileiro. A voz padrão multilíngue do exemplo foi preservada; valide a pronúncia em uma chamada real.
+**POC de assistência à manutenção industrial por voz, com IA em português, consulta a manuais, visão por câmera e integração com uma planta LTQ simulada.**
 
-1. Preencha `NEXT_PUBLIC_AGORA_APP_ID` e `NEXT_AGORA_APP_CERTIFICATE` no `.env.local` (já criado, ignorado pelo Git).
-2. Confirme que Conversational AI e Signaling estão habilitados no projeto Agora.
-3. Execute `pnpm dev` e abra a URL exibida no terminal (3000 por padrão; nesta sessão, http://127.0.0.1:3001).
-4. Clique em **Iniciar conversa**, permita o microfone, fale e teste interromper a resposta.
-5. Clique em **Encerrar conversa** para finalizar a sessão.
+A Unmute explora uma conversa natural entre operador e assistente para investigar sintomas de equipamentos. O operador relata o problema pelo microfone; a assistente consulta as fontes configuradas, apresenta as evidências disponíveis e informa quando faltam dados para orientar o próximo passo. A câmera pode complementar a conversa quando houver uma dúvida visual ou um pedido explícito.
 
-Não envie o App Certificate pelo chat. Ele permanece no servidor.
-Sem as credenciais, é possível abrir a interface e executar typecheck, verify:api e build, mas não validar áudio, transcrição ou latência reais.
+O cenário de demonstração é uma **linha de laminação de tiras a quente (LTQ)**. O projeto reúne voz em tempo real, pesquisa documental, ferramentas MCP, experimentos visuais e relatórios de chamada em uma aplicação Next.js.
 
-Base oficial preservada abaixo, com licença MIT.
+> Status: prova de conceito local. As leituras da planta são simuladas e os recursos visuais são demonstrativos. A aplicação ainda exige validação técnica e controles de produção antes de uso operacional.
 
-## Teste visual de pessoas
+## Recursos
 
-A página inicial abre o **Teste de pessoas**, ao lado da conversa Agora. Clique em **Ativar câmera** e permita acesso à câmera ou em **Usar exemplo** para testar sem câmera. Use **Usar traseira** ou **Usar frontal** para escolher a câmera antes de ativá-la ou trocar durante o teste. Pessoas detectadas recebem caixas ou círculos, com confiança e contagem. Ajuste **Confiança mínima** para filtrar resultados. **Parar** desliga a câmera e limpa as marcações; trocar para **Modelo LTQ** também libera a câmera.
+| Recurso | O que demonstra |
+| --- | --- |
+| Conversa em português brasileiro | Áudio em tempo real, interrupção da resposta, transcrição e métricas de latência com Agora. |
+| Consulta a manuais | Busca híbrida por palavras e significado, com respostas baseadas em trechos e citações de seção ou página. |
+| Ferramentas da planta | Consulta a alarmes, leituras, histórico, códigos e tags de 17 equipamentos simulados via MCP. |
+| Câmera na conversa | Compartilhamento opcional de vídeo e análise de um quadro para descrever ou destacar objetos por voz. |
+| Teste local de pessoas | Detecção no navegador, com câmera ou imagem de exemplo, caixas/círculos e filtro de confiança. |
+| Demonstração LTQ | Vídeo conceitual de uma cadeira acabadora gerado no Tripo. |
+| Relatório pós-chamada | Markdown e JSON privados com falas, evidências, linha do tempo, limitações e próximas ações. |
+| Observabilidade | Traces opcionais no Langfuse para acompanhar conexão, ferramentas e resultados. |
 
-O COCO-SSD / TensorFlow.js roda no navegador, com WebGL e alternativa CPU. Os pesos e a foto de exemplo são servidos localmente em `public/vision-demo/` (origem e licença nesse diretório); o primeiro carregamento transfere cerca de 18 MB. O teste de pessoas processa as imagens localmente. A câmera solicita somente vídeo; o microfone continua sob responsabilidade da conversa. Use localhost ou HTTPS para acesso à câmera.
+## Papéis e orquestração
 
-Este teste localiza pessoas, sem identificar indivíduos. Pode falhar ou gerar falsos positivos. As marcações permanecem no teste visual. O adaptador `VisualDetector` em `lib/visual-detection.ts` permite substituir a detecção de pessoas por outro detector que devolva rótulo, confiança e caixas normalizadas, após validação específica para peças do LTQ.
+O fluxo tem **5 papéis funcionais: 1 agente principal e 4 funções de apoio**. Durante a conversa, o agente principal no Agora coordena pesquisa documental, consultas ao CLP e análise visual, quando esses recursos estão configurados. A aplicação coordena a geração do postmortem após finalizar a coleta da chamada.
 
-### Testar no celular com ngrok
+| Papel | Responsabilidade | Quem aciona | Modelo padrão |
+| --- | --- | --- | --- |
+| **1. Assistente de manutenção** | Conversa com o operador, entende o relato, escolhe as consultas e responde por voz com as evidências disponíveis. | Operador, pela conversa no Agora. | `gpt-4o-mini`, gerenciado pelo Agora. |
+| **2. Pesquisador do manual** | Busca trechos do manual e sintetiza uma resposta com referências de seção ou página. | Agente principal; há um fallback pela transcrição final para relatos pertinentes, sem duplicar pesquisas já iniciadas. | `gpt-5.4-mini`, configurável por `OPENAI_RAG_MODEL`. |
+| **3. CLP e telemetria da planta** | Fornece alarmes, leituras atuais, histórico e documentação de códigos e tags dos equipamentos simulados. | Agente principal, que cruza os dados com a documentação e interpreta o resultado. | Sem modelo próprio; a interpretação fica no agente principal. |
+| **4. Analista visual** | Descreve um quadro da câmera ou localiza um objeto para marcá-lo na imagem enviada. | Agente principal, diante de um pedido visual e com a câmera compartilhada. | `gpt-4o-mini`, configurável por `OPENAI_VISION_MODEL`. |
+| **5. Analista pós-chamada** | Consolida falas e evidências em um postmortem com linha do tempo, análise, limitações e próximas ações. | Aplicação, após finalizar a coleta, fora da orquestração conversacional do Agora. | `OPENAI_POSTMORTEM_MODEL`, ou `OPENAI_RAG_MODEL`, ou `gpt-5.4-mini`, nessa ordem. |
 
-Para uma demonstração sem o runtime de desenvolvimento, execute `pnpm run build`, depois `pnpm start --hostname 127.0.0.1 --port 3002` e, em outro terminal, `ngrok http 3002`. Abra a URL HTTPS emitida pelo ngrok no navegador do celular, passe pelo aviso **Visit Site**, toque em **Ativar câmera** e permita vídeo. A conversa pede microfone separadamente. Mantenha o servidor e o túnel ativos. Alterações de código exigem novo build e reinício desse servidor.
+Na implementação atual, **somente o principal é uma sessão de agente Agora**. Pesquisa, visão e postmortem são rotinas de IA com prompts próprios. CLP/telemetria reúne serviços de dados e documentação simulados, cuja interpretação cabe ao principal. Assim, a contagem descreve responsabilidades no fluxo, sem atribuir sessões autônomas aos quatro apoios.
 
-Evite apontar o túnel direto para `next dev` sem configurar a origem: o Next.js pode bloquear recursos internos de desenvolvimento ([allowedDevOrigins](https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins)). O endereço do ngrok pode mudar ao reiniciar o túnel.
+```mermaid
+flowchart TB
+    operador["Operador"]
 
-## Demonstração LTQ
+    subgraph conversa["Durante a conversa — coordenação pelo agente Agora"]
+        principal["1. Assistente de manutenção<br/>Agente principal — GPT-4o mini"]
+        pesquisa["2. Pesquisador do manual<br/>Busca e resposta com referências"]
+        clp["3. CLP e telemetria<br/>Dados e documentação simulados<br/>Interpretados pelo principal"]
+        visao["4. Analista visual<br/>Descrição ou localização em um quadro"]
 
-Na aba **Modelo LTQ**, a página reúne a gravação do modelo de cadeira acabadora de LTQ gerado no Tripo e a conversa por voz Agora, com o logotipo da Agora. O vídeo em `public/models/ltq-cadeira-acabadora.mp4` é servido pelo próprio Next.js, com reprodução, pausa e tela cheia pelos controles nativos. Ele é uma demonstração visual, sem seleção de peças ou controle por voz.
+        principal -->|Solicita pesquisa| pesquisa
+        pesquisa -->|Resultado assíncrono via think| principal
+        principal -->|Consulta alarmes, leituras e documentação| clp
+        clp -->|Dados para interpretação| principal
+        principal -->|Solicita análise com câmera compartilhada| visao
+        visao -->|Descrição ou resultado da marcação| principal
+    end
 
-Abra o painel de voz ou `/voice` e clique em **Iniciar conversa**. Para enviar vídeo ao Agora, toque em **Compartilhar câmera**, permita acesso e pergunte “O que você está vendo?”. Use **Usar frontal** ou **Usar traseira** para trocar a lente, e **Parar vídeo** para interromper o envio sem encerrar a conversa. Ao compartilhar, a chamada libera automaticamente a câmera do teste visual. Se o navegador bloquear o acesso no painel, abra `/voice` em tela cheia e permita o uso da câmera. O GPT-4o mini gerenciado recebe quadros via Agora RTC.
+    operador <-->|Conversa por voz| principal
+    coleta["Aplicação Next.js<br/>Coleta de falas e evidências"]
+    principal -.->|Transcrição| coleta
+    pesquisa -.->|Resultado da pesquisa| coleta
+    clp -.->|Resultados das consultas| coleta
+    visao -.->|Resultado sem armazenar o quadro| coleta
+    coleta -->|Ao finalizar a coleta| post["5. Analista pós-chamada<br/>Acionado pela aplicação"]
+    post --> arquivos["Postmortem privado<br/>Markdown e JSON"]
+```
 
-O modelo é conceitual e ainda exige revisão técnica para representar uma cadeira quádrua fielmente. O link **Abrir no Tripo** leva ao modelo original. A exportação GLB exige um plano Tripo que habilite downloads; nenhum GLB foi incluído nesta POC.
+Pesquisa, visão e postmortem usam o adaptador de provedores do servidor, com Feita como alternativa/fallback quando configurada. Essa configuração não altera o modelo de voz gerenciado pelo Agora. O teste local de pessoas e o vídeo conceitual LTQ permanecem independentes desses papéis.
 
----
+As responsabilidades estão implementadas em [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts), [`lib/document-research.ts`](lib/document-research.ts), [`lib/plant-mcp.ts`](lib/plant-mcp.ts), [`lib/vision-annotation-server.ts`](lib/vision-annotation-server.ts), [`lib/ai-provider.ts`](lib/ai-provider.ts) e [`lib/postmortem.ts`](lib/postmortem.ts).
 
-# Agora Conversational AI Next.js Quickstart
+## Arquitetura
 
-[![Build](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml/badge.svg)](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs/actions/workflows/build-check.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
+```mermaid
+flowchart TB
+    operador[Operador]
 
-Build a production-style voice agent in minutes with Next.js and the Agora Conversational AI Engine, including voice agent visualizer ([Agent UIKit](https://agoraio-conversational-ai.github.io/agent-uikit/)), live transcript, and real-time pipeline latency via `AGENT_METRICS` ([Agent Toolkit](https://github.com/AgoraIO-Conversational-AI/agent-client-toolkit-ts)).
+    subgraph browser["Navegador"]
+        workspace["/ — Workspace visual"]
+        local["Teste de pessoas local<br/>TensorFlow.js + COCO-SSD"]
+        ltq["Vídeo conceitual LTQ"]
+        voz["/voice — Conversa<br/>Microfone, câmera opcional e transcrição"]
+        workspace --> local
+        workspace --> ltq
+        workspace -->|iframe| voz
+    end
 
-## Prerequisites
+    subgraph app["Servidor Next.js — um processo persistente"]
+        api["APIs de token, convite e encerramento"]
+        tools["Ferramentas de câmera e pesquisa<br/>Callbacks HTTPS e capacidades por sessão"]
+        rag["Manual privado<br/>BM25 + embeddings opcionais"]
+        post["Coleta e geração do postmortem"]
+    end
 
-- [Node.js 22+](https://nodejs.org/en/download/)
-- [pnpm](https://pnpm.io/installation)
-- [Agora CLI](https://github.com/AgoraIO-Community/cli)
+    agora["Agora Cloud<br/>Deepgram STT → GPT-4o mini → MiniMax TTS"]
+    providers["OpenAI / Feita<br/>Pesquisa, visão e análise pós-chamada"]
+    plant["MCPs Python locais<br/>Telemetria e documentação simuladas"]
+    files["files/postmortems/<br/>Markdown + JSON privados"]
+    traces["Langfuse local<br/>Estados e contagens"]
 
-## Run It
+    operador --> voz
+    operador --> workspace
+    voz -->|HTTP| api
+    api -->|Inicia e encerra o agente| agora
+    voz <-->|RTC: áudio e vídeo opcional| agora
+    agora -->|RTM: transcrição, estados e métricas| voz
+    agora -->|REST / MCP| tools
+    tools <-->|Captura de quadro e resultados| voz
+    tools --> rag
+    tools --> plant
+    rag --> providers
+    tools -->|Análise de quadro| providers
+    tools -->|Resultado da pesquisa via think| agora
+    voz -->|Falas concluídas e diagnósticos| post
+    tools -->|Evidências de ferramentas| post
+    post --> providers
+    post --> files
+    app -.->|Diagnósticos sem texto ou imagens| traces
+```
 
-Getting started is quick and easy: install the CLI _(skip if you already have it)_ , scaffold the Next.js quickstart using the Agora CLI, install dependencies, and run.
+A voz usa o pipeline STT → LLM → TTS gerenciado pelo Agora, configurado em [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts). A configuração básica exige apenas as credenciais Agora; as chamadas adicionais à OpenAI/Feita pertencem aos recursos opcionais de pesquisa, visão e análise. A interface usa Next.js 16, React 19 e TypeScript.
 
-1. **Install the Agora CLI and sign in**
-   _(skip if `agora` is already on your PATH)_:
+O teste local de pessoas processa imagens no navegador e mantém suas marcações nesse painel. O compartilhamento da câmera na conversa é um controle separado, que envia vídeo ao Agora somente após a ação do usuário.
 
-   macOS and Linux:
+## Fluxo de uma conversa
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/AgoraIO/cli/main/install.sh | sh -s -- --add-to-path
-   ```
+```mermaid
+sequenceDiagram
+    actor O as Operador
+    participant UI as Navegador
+    participant N as Next.js
+    participant A as Agente Agora
+    participant F as Manual / MCPs / Visão
 
-   Windows PowerShell:
+    O->>UI: Iniciar conversa e permitir microfone
+    UI->>N: Solicitar token RTC + RTM e convidar agente
+    N->>A: Criar sessão em português
+    N-->>UI: Token e capacidades da sessão
+    UI->>A: Publicar áudio via RTC
+    O->>A: Relatar um sintoma
+    A-->>UI: Transcrição, estado e métricas via RTM
 
-   ```powershell
-   irm https://dl.agora.io/cli/install.ps1 | iex
-   ```
+    opt Ferramenta configurada e pertinente
+        A->>N: Consultar manual, planta ou câmera
+        N->>F: Executar consulta
+        Note over UI,F: A visão requer câmera compartilhada.<br/>A anotação usa um quadro específico.
+        F-->>N: Resultado e evidências disponíveis
+        N-->>A: Retorno da ferramenta / resultado da pesquisa
+    end
 
-   If the Windows install command fails in PowerShell, try running the macOS/Linux command from [Git Bash](https://git-scm.com/downloads/win), then open a new terminal and run `agora --help` to confirm the CLI is on your PATH.
+    A-->>O: Resposta por voz com evidências e limitações
+    UI->>N: Enviar falas concluídas e diagnósticos
+    O->>UI: Encerrar conversa
+    UI->>N: Enviar evidências finais e solicitar encerramento
+    N->>A: Parar agente
+    N->>N: Gerar relatório em segundo plano
+    N-->>UI: Status e nomes dos arquivos privados
+```
 
-   Then verify and sign in:
+A pesquisa documental entra em uma fila e devolve um ID imediatamente, permitindo continuar a conversa enquanto o resultado é preparado. Quando termina, o servidor entrega o resultado ao modelo Agora da mesma chamada. A assistente deve distinguir relatos, hipóteses, dados simulados e fatos sustentados pelas fontes.
 
-   ```bash
-   agora --help
-   agora login
-   ```
+## Executar localmente
 
-   If `agora --help` is not found after install, close and reopen your terminal, then try again. If it still fails, check that the installer-added Agora CLI location is on your shell `PATH`.
+### Pré-requisitos
 
-2. **Scaffold and run**
-   `agora init` clones the starter, binds an Agora project, and writes `.env.local`. (replace `my-nextjs-demo` with your own project name):
+- Node.js **22 ou superior** e **pnpm**.
+- Projeto Agora com **Conversational AI** e **Signaling** habilitados para chamadas reais.
+- Navegador com microfone; câmera opcional. A captura de mídia exige localhost ou HTTPS.
+- Python **3.11+** para os MCPs simulados; Docker Compose para o Langfuse; ngrok para a demonstração externa. Esses recursos são opcionais.
 
-   ```bash
-   agora init my-nextjs-demo --template nextjs
-   cd my-nextjs-demo
-   pnpm install
-   pnpm dev
-   ```
+### Instalação
 
-3. Open [http://localhost:3000](http://localhost:3000) and click **Start conversation**.
-
-If the agent does not join or transcripts do not appear, run **`agora project doctor --deep`** to check credentials, feature enablement, network reachability, and local env binding.
-
-### Working from a clone of this repository
-
-Use this path if you already cloned **this** repo (for example to contribute or fork):
+Na raiz deste checkout:
 
 ```bash
-git clone https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs.git
-cd agent-quickstart-nextjs
-agora login
-agora project use <your-project>
 pnpm install
+cp -n env.local.example .env.local
+```
+
+Preencha as duas variáveis obrigatórias em `.env.local`:
+
+```dotenv
+NEXT_PUBLIC_AGORA_APP_ID=seu-app-id
+NEXT_AGORA_APP_CERTIFICATE=seu-app-certificate
+```
+
+O App Certificate permanece no servidor. O arquivo `.env.local` é ignorado pelo Git.
+
+```bash
+pnpm run doctor
+pnpm run dev
+```
+
+Abra a URL exibida no terminal, normalmente [http://localhost:3000](http://localhost:3000). A rota `/` reúne o teste visual e a conversa; `/voice` abre somente a experiência de voz. Clique em **Iniciar conversa**, permita o microfone e relate o problema. Use **Encerrar conversa** para finalizar a sessão.
+
+Com a [Agora CLI](https://github.com/AgoraIO-Community/cli) já instalada, também é possível configurar as credenciais pelo projeto:
+
+```bash
+agora login
+agora project use <seu-projeto>
 agora project env write .env.local
 agora project doctor --deep
-pnpm dev
 ```
 
-### Deploy to Vercel
+Sem credenciais, o teste local com **Usar exemplo** continua disponível, assim como lint, typecheck, verificações de API e build. Áudio, transcrição e latência reais exigem uma chamada Agora.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs&project-name=agent-quickstart-nextjs&repository-name=agent-quickstart-nextjs&env=NEXT_PUBLIC_AGORA_APP_ID,NEXT_AGORA_APP_CERTIFICATE&envDescription=Agora%20credentials%20needed%20to%20run%20the%20app&envLink=https%3A%2F%2Fgithub.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%23run-it&demo-title=Agora%20Conversational%20AI%20Next.js%20Quickstart&demo-description=Official%20Next.js%20quickstart%20for%20building%20browser-based%20voice%20AI%20with%20Agora&demo-image=https%3A%2F%2Fraw.githubusercontent.com%2FAgoraIO-Conversational-AI%2Fagent-quickstart-nextjs%2Fmain%2F.github%2Fassets%2FConversation-Ai-Client.gif)
+## Configuração dos recursos opcionais
 
-To populate Vercel env vars from your bound Agora project:
+Use [`env.local.example`](env.local.example) como referência. Reinicie o servidor e abra uma **nova chamada** após alterar a configuração.
+
+| Variável | Uso |
+| --- | --- |
+| `OPENAI_API_KEY` | Provedor principal para pesquisa, análise de câmera, embeddings e postmortem. |
+| `FEITA_API_KEY` | Alternativa/fallback para respostas do manual, visão e postmortem. |
+| `AGORA_ANNOTATION_ORIGIN` | Origem HTTPS pública deste Next.js, usada nos callbacks de visão e nos MCPs. |
+| `RAG_DOCUMENT_PATH` | Caminho para um manual privado em Markdown ou texto UTF-8. |
+| `RAG_DOCUMENT_TITLE` / `RAG_DOCUMENT_LANGUAGE` | Título para citações e idioma da fonte para auxiliar a busca. |
+| `OPENAI_RAG_MODEL` | Modelo de resposta documental; padrão `gpt-5.4-mini`. |
+| `OPENAI_VISION_MODEL` | Modelo de visão; padrão `gpt-4o-mini`. |
+| `OPENAI_POSTMORTEM_MODEL` | Modelo do relatório; usa `OPENAI_RAG_MODEL` ou `gpt-5.4-mini` por padrão. |
+| `FEITA_MODEL` | Modelo da Feita; padrão `qwen/qwen4-max`. |
+| `PLANTA_MCP_TOKEN` | Segredo compartilhado entre Next.js e os dois MCPs Python. |
+| `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Exportação de traces para o Langfuse local. |
+
+### Consulta ao manual por voz
+
+1. Guarde a fonte fora de `public/` e do Git, por exemplo em `.rag/manual.md`.
+2. Configure `RAG_DOCUMENT_PATH`, um provedor de IA e `AGORA_ANNOTATION_ORIGIN`.
+3. Defina `RAG_DOCUMENT_TITLE` e, se a fonte estiver em outro idioma, `RAG_DOCUMENT_LANGUAGE`.
+4. Inicie uma chamada e diga, por exemplo: “O rolamento está esquentando e fazendo barulho. O que eu devo verificar?”.
+
+O MCP `ManualManutencaoLTQ` oferece `consultar_manual_de_manutencao` e `consultar_resultado`. O prompt atual direciona sintomas de rolamentos para essa pesquisa; um fallback pela transcrição final pode encaminhar falas pertinentes quando a chamada MCP não ocorreu, evitando duplicação de jobs. O resultado aparece no painel e volta ao agente de voz. **Ouvir resposta** permite repetir a leitura.
+
+A busca combina BM25 com embeddings da OpenAI e mantém o cache em `.rag/vectors/`. A primeira indexação envia os trechos da fonte à API de embeddings; cada pesquisa envia a pergunta, e a síntese recebe apenas os trechos recuperados. Sem embeddings disponíveis, a busca usa BM25. Títulos Markdown permitem citar seções; texto extraído de PDF com separadores form feed preserva referências de página.
+
+### MCPs da planta simulada
+
+Os serviços Python compartilham um catálogo de 17 equipamentos e funcionam independentemente da pesquisa no manual SKF:
+
+| Servidor | Ferramentas | Endereço local |
+| --- | --- | --- |
+| `TelemetriaCLPLTQ` | `status_clp`, `status_maquina`, `historico` | `127.0.0.1:8011` |
+| `DocumentacaoPlantaLTQ` | `consultar_documentacao_equipamento_ltq`, `consultar_manual_clp` | `127.0.0.1:8012` |
 
 ```bash
-agora project use <your-project>
-agora project env write .env.local
-rg "^(NEXT_PUBLIC_AGORA_APP_ID|NEXT_AGORA_APP_CERTIFICATE)=" .env.local
+python3 -m venv planta-mcp/.venv
+planta-mcp/.venv/bin/pip install ./planta-mcp
 ```
 
-Copy those two values into Vercel Project Settings -> Environment Variables.
-
-### Environment variables
-
-Defined in [`env.local.example`](env.local.example).
-
-| Variable                     | Required | Notes                                                            |
-| ---------------------------- | :------: | ---------------------------------------------------------------- |
-| `NEXT_PUBLIC_AGORA_APP_ID`   |    ✅    | Agora Console → Project → App ID.                                |
-| `NEXT_AGORA_APP_CERTIFICATE` |    ✅    | Agora Console → Project → App Certificate. **Server-side only.** |
-
-The default agent configuration in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) uses Agora-managed STT, LLM, and TTS, so no extra vendor API keys are required for the base quickstart.
-
-## Commands
+Gere um segredo com `openssl rand -hex 32`. Defina o mesmo `PLANTA_MCP_TOKEN` em `.env.local` e como variável de ambiente nos dois terminais Python. Execute um serviço em cada terminal:
 
 ```bash
-# Dev
-pnpm dev                # start the Next.js dev server
-
-# Quality
-pnpm run lint           # eslint
-pnpm run typecheck      # tsc --noEmit
-pnpm run doctor         # local prereqs + env binding
-
-# CI / pre-ship
-pnpm run verify:api     # API contract checks
-pnpm run build          # production build
-pnpm run verify         # doctor + lint + typecheck + verify:api + build
+planta-mcp/.venv/bin/planta-mcp telemetria
 ```
-
-Run `pnpm run verify` before shipping changes — it covers local prerequisites, lint, type safety, the core API route contracts, and the production build.
-
-## Architecture
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./system-architecture-dark.svg">
-  <img src="./system-architecture.svg" alt="System architecture">
-</picture>
-
-The browser fetches a combined RTC + RTM token (`buildTokenWithRtm`) from this app, joins the channel using a single RTC client, and uses RTM as the data channel for transcript, agent state, metrics, and error events. The Conversational AI Engine joins the same channel as the shared agent UID in [`lib/agora.ts`](lib/agora.ts) and runs the STT → LLM → TTS pipeline in Agora Cloud.
-
-## What You Get
-
-- browser voice client built with Next.js App Router
-- RTC audio plus RTM transcript and state events
-- server routes for token generation, invite, and stop
-- [`AgentVisualizer`](https://agoraio-conversational-ai.github.io/agent-uikit/) for agent state and a built-in transcript panel for live turns
-- per-stage latency header driven by `AGENT_METRICS`
-- Agora-managed default STT, LLM, and TTS configuration
-
-## How It Works
-
-1. The browser requests an RTC + RTM token from `/api/generate-agora-token`.
-2. The backend invites an Agora cloud agent with `/api/invite-agent`.
-3. The browser joins the channel and publishes mic audio.
-4. The client receives transcript, agent state, and `AGENT_METRICS` (per-stage latency) events over RTM.
-5. On end, the client calls `/api/stop-conversation`, logs out RTM, and unmounts the call view so Agora React hooks clean up RTC publish/join and the local microphone track.
-
-## Optional BYOK
-
-The base `.env.local` contract contains only Agora credentials. If you are migrating from a supported provider, uncomment the matching snippet in [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts) and add its variables to your local environment.
 
 ```bash
-# Deepgram STT
-NEXT_DEEPGRAM_API_KEY=...
-
-# OpenAI-compatible LLM
-NEXT_LLM_URL=https://api.openai.com/v1/chat/completions
-NEXT_LLM_API_KEY=...
-
-# ElevenLabs TTS
-NEXT_ELEVENLABS_API_KEY=...
-NEXT_ELEVENLABS_VOICE_ID=...
+planta-mcp/.venv/bin/planta-mcp documentacao
 ```
 
-## Repo Map
+Configure `AGORA_ANNOTATION_ORIGIN` com a origem HTTPS pública do Next.js. O app encaminha `/api/planta/telemetria` e `/api/planta/documentacao` para os serviços no mesmo host, com autenticação Bearer. Token vazio desativa essas ferramentas na voz.
 
-- `app/api/generate-agora-token/route.ts` — issues RTC + RTM tokens
-- `app/api/invite-agent/route.ts` — starts the agent session and configures the pipeline
-- `app/api/stop-conversation/route.ts` — stops the agent session
-- `components/LandingPage.tsx` — entry point: token fetch, RTM login, conversation lifecycle
-- `components/ConversationComponent.tsx` — RTC client, transcript state, `AGENT_METRICS`, mic release
-- `components/QuickstartConversationLayout.tsx` — in-call header, transcript rail, controls dock
-- `components/QuickstartPipelineMetrics.tsx` — per-stage latency chips in the header
-- `components/QuickstartTranscriptPanel.tsx` — live transcript rail
-- `components/QuickstartPreCallCard.tsx` — pre-call hero card
-- `lib/chat-completions.ts` — server-side custom LLM SSE handler used by the chat completions route
-- `lib/conversation.ts` — transcript normalization and visualizer state mapping
-- `AGENTS.md` — primary agent-facing guide
+Teste: “Quais alarmes estão ativos na F5?”, “O que a tag AI012 mede?” ou “Como essa variável mudou na última hora?”. **Todas as leituras são simuladas.**
 
-## Troubleshooting
+### Câmera e marcação por voz
 
-- **Agent does not join or transcripts are missing:** run `agora project doctor --deep`.
-- **`pnpm run doctor` fails:** run `agora project env write .env.local`, then retry.
-- **Manual clone / env values:** `agora project use <your-project>` then `agora project env write .env.local`.
-- **RTM login fails:** keep [`app/api/generate-agora-token/route.ts`](app/api/generate-agora-token/route.ts) on `RtcTokenBuilder.buildTokenWithRtm` — RTC-only tokens will not satisfy `rtm.login`.
-- **Transcript speakers inverted:** check the `uid === "0"` remap in [`components/ConversationComponent.tsx`](components/ConversationComponent.tsx).
-- **Agent never appears in channel:** ensure the shared agent UID in [`lib/agora.ts`](lib/agora.ts) is used by both the client and invite route.
+Na conversa, clique em **Compartilhar câmera** e permita vídeo. **Usar frontal** / **Usar traseira** troca a lente; **Parar vídeo** encerra o envio sem encerrar a chamada. Compartilhar libera primeiro a câmera do teste local. Se a permissão falhar no painel incorporado, abra `/voice` diretamente.
 
-## More Docs
+Com um provedor de IA e `AGORA_ANNOTATION_ORIGIN` configurados, as ferramentas `observar_camera` e `circular_objeto` permitem pedir “O que você está vendo?” ou “Circule a garrafa”. O navegador captura um JPEG e o servidor solicita a análise. A marcação aparece sobre o quadro congelado enviado; **Voltar ao vídeo** retoma a prévia. As coordenadas são aproximadas e as imagens não são persistidas pelo servidor.
 
-- [docs/ai/L0_repo_card.md](./docs/ai/L0_repo_card.md)
-- [docs/ai/RECIPE.md](./docs/ai/RECIPE.md)
-- [AGENTS.md](./AGENTS.md)
+### Testes visuais e modelo LTQ
 
-## Contributing
+Em **Teste de pessoas**, use **Ativar câmera** ou **Usar exemplo**. Ajuste **Confiança mínima**, alterne **Caixa/Círculo** e use **Parar** para limpar as marcações e liberar a câmera. Trocar para **Modelo LTQ** também libera a câmera.
 
-Pull requests welcome — see [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and conventions.
+O COCO-SSD/TensorFlow.js usa WebGL ou CPU no navegador. Os pesos e a imagem de exemplo ficam em [`public/vision-demo/`](public/vision-demo/), com atribuições e licença; o primeiro carregamento transfere cerca de 18 MB. O detector localiza pessoas, sem reconhecer identidades ou diagnosticar equipamentos.
 
-## Security
+A aba **Modelo LTQ** reproduz [`public/models/ltq-cadeira-acabadora.mp4`](public/models/ltq-cadeira-acabadora.mp4), com controles nativos. É uma demonstração conceitual gerada no Tripo, sem seleção de peças ou controle por voz. A exportação GLB exige um plano Tripo compatível e nenhum GLB está incluído nesta POC.
 
-Please do **not** open public issues for security reports. Email security@agora.io with details and reproduction steps.
+### Relatório pós-chamada
 
-## License
+Ao encerrar, a aplicação gera em segundo plano um postmortem em português e mostra seu andamento e os nomes dos arquivos. Markdown e JSON ficam em `files/postmortems/`, pasta privada ignorada pelo Git. A coleta funciona independentemente da pesquisa documental.
 
-Released under the [MIT License](./LICENSE).
+O relatório inclui resumo, contexto, linha do tempo, evidências, análise, desfecho, próximas ações, qualidade técnica e limitações. Ele armazena falas concluídas/interrompidas e resultados limitados de ferramentas, com referências às evidências. Os horários indicam recebimento; encerrar a chamada não comprova resolução ou causa raiz. Jobs de ferramentas ainda pendentes não são aguardados nem incorporados depois.
 
-### Circular objetos por voz
+A análise usa OpenAI e/ou Feita, enviando as evidências ao provedor configurado. Sem provedor ou em caso de falha, salva um relatório básico. **Tentar gerar novamente** permite até duas novas gerações enquanto a sessão estiver disponível.
 
-Configure `OPENAI_API_KEY` no `.env.local` e `AGORA_ANNOTATION_ORIGIN` com o endereço HTTPS público da POC. Reinicie o servidor e abra uma nova chamada. Com a câmera compartilhada, diga “circule a garrafa”. O Agora pede a marcação, o navegador captura um quadro e o servidor chama a OpenAI. Veja o resultado no quadro congelado e toque em **Voltar ao vídeo**. A localização é aproximada. Para uma descrição sem marcação, pergunte “O que você está vendo?”. A assistente analisa um quadro atual da câmera compartilhada. A POC limita o volume de análises e requer um único processo Next.js para encaminhar as solicitações.
+A coleta limita cada sessão a 300 falas, 500 eventos e 160 mil caracteres, com até 5 mil caracteres por fala. Fechar a página tenta finalizar por `keepalive`; dois minutos sem heartbeat também encerram a coleta como perda de contato, sem comprovar o desligamento do Agora. O processo salva um checkpoint JSON antes da geração. Reiniciá-lo perde coletas e jobs em memória; checkpoints interrompidos não são retomados automaticamente. As capacidades de consulta/repetição expiram uma hora após o encerramento; os arquivos permanecem no disco, com retenção manual.
 
-### Consultar um documento por voz
+### Langfuse local
 
-A assistente de manutenção começa pelo relato do operador, consulta a documentação configurada antes de orientar uma intervenção e informa quando falta evidência. Só sugere a câmera quando um detalhe visual continua em aberto.
+O Compose em [`ops/langfuse/compose.yml`](ops/langfuse/compose.yml) mantém o painel em loopback. Prepare `.langfuse/.env` com as variáveis exigidas pelo Compose: `LANGFUSE_NEXTAUTH_SECRET`, `LANGFUSE_POSTGRES_PASSWORD`, `LANGFUSE_SALT`, `LANGFUSE_ENCRYPTION_KEY`, `LANGFUSE_CLICKHOUSE_PASSWORD`, `LANGFUSE_REDIS_PASSWORD`, `LANGFUSE_MINIO_PASSWORD`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_USER_EMAIL` e `LANGFUSE_USER_PASSWORD`.
 
-Guarde o documento em Markdown ou texto UTF-8 numa pasta privada, como `.rag/`. Configure `RAG_DOCUMENT_PATH` e, opcionalmente, `RAG_DOCUMENT_TITLE` no `.env.local`. Se o manual estiver em outro idioma, configure `RAG_DOCUMENT_LANGUAGE` para o Agora enviar termos de busca traduzidos e manter a resposta em português. Reuse `AGORA_ANNOTATION_ORIGIN` como o endereço HTTPS de retorno das ferramentas do Agora. Para citar seções, use títulos Markdown. Se o texto vier de um PDF, separe as páginas com form feed para preservar sua numeração. Após trocar o documento, reinicie o servidor e abra uma chamada nova. Descreva o que você está observando, por exemplo “O rolamento está esquentando e fazendo barulho. O que eu devo verificar?”. A assistente consulta o manual automaticamente para dúvidas de manutenção dentro do escopo da fonte. Se o agente de voz deixar passar uma fala claramente relacionada ao equipamento, a POC pode iniciar a mesma pesquisa pela transcrição final. O Agora chama `consultar_manual_de_manutencao` no MCP `ManualManutencaoLTQ` e recebe o ID imediatamente. A busca híbrida combina BM25 com embeddings da OpenAI e um agente de pesquisa monta a resposta com fonte em segundo plano. Na primeira indexação, os trechos são enviados à API de embeddings e os vetores ficam em `.rag/vectors/`. Nas consultas seguintes, a pergunta original é embutida para a busca semântica e os termos traduzidos ajudam o BM25. A conversa continua disponível. Ao concluir a pesquisa, o servidor envia a pergunta, o resultado e as fontes disponíveis ao modelo do Agora na mesma chamada. O agente pode responder por voz e usar o resultado nas perguntas seguintes. O painel também oferece **Ouvir resposta** para repetir a leitura. A consulta exige `OPENAI_API_KEY`; `OPENAI_RAG_MODEL` é opcional.
+```bash
+docker compose --env-file .langfuse/.env -f ops/langfuse/compose.yml up -d
+```
 
-### Acompanhar as chamadas no Langfuse
+Abra [http://localhost:3100](http://localhost:3100). Configure `LANGFUSE_BASE_URL=http://127.0.0.1:3100` e as chaves do projeto no `.env.local` do Next.js. Novas chamadas correlacionam convite, microfone, câmera, descoberta/chamada de ferramentas e pesquisa em um trace. Os campos Input/Output contêm apenas estados e contagens, sem áudio, quadros, transcrições ou trechos do manual. Os relatórios pós-chamada têm armazenamento separado e contêm texto da conversa.
 
-O Compose local fica em `ops/langfuse/compose.yml`. Execute `docker compose --env-file .langfuse/.env -f ops/langfuse/compose.yml up -d` e abra `http://localhost:3100`. `.langfuse/.env` guarda o login e as chaves do projeto local. Configure `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY` e `LANGFUSE_SECRET_KEY` no servidor Next.js. Novas chamadas têm um trace com convite, conexão do microfone, chegada da transcrição final, inicialização do MCP, ferramentas listadas, chamada à ferramenta, roteamento pela transcrição e resultado da pesquisa. Veja `mcp.tools_list` para confirmar a descoberta e `mcp.consultar_manual_de_manutencao` para confirmar o uso. O trace mostra estados e contagens em **Input**, **Output** e **Metadata**, incluindo publicação da câmera, envio local de quadros e resultado da ferramenta de visão. Ele não registra áudio, quadros, texto transcrito ou conteúdo do manual.
+### Retry e fallback
 
-### Retry e fallback Feita
+O adaptador [`lib/ai-provider.ts`](lib/ai-provider.ts) faz até duas novas tentativas por provedor em falhas transitórias, com backoff de 200/400 ms, jitter e respeito a `Retry-After` e ao prazo total. Quando configurada, a Feita recebe a pergunta e os trechos recuperados ou o quadro solicitado se a OpenAI falhar; também pode ser usada como único provedor de chat. Para embeddings, a alternativa é BM25. A voz continua no Agora.
 
-Configure `FEITA_API_KEY` no servidor para ativar a Feita como fallback do manual e da análise de câmera. O adaptador em `lib/ai-provider.ts` faz até duas novas tentativas por provedor em falhas transitórias, com backoff exponencial (200 ms, 400 ms) e jitter de até 149 ms, respeitando Retry-After e o prazo total. Se a OpenAI falhar, a Feita recebe a pergunta e os trechos recuperados ou o quadro solicitado. O modelo padrão é `qwen/qwen4-max`, configurável por `FEITA_MODEL`. Para embeddings, o fallback continua sendo a busca por BM25. A voz usa o Agora.
+## Demonstração no celular
 
-### MCPs da planta LTQ simulada
+Gere e sirva o build de produção:
 
-O Next.js encaminha as consultas de voz pelo mesmo túnel HTTPS de `AGORA_ANNOTATION_ORIGIN`. `TelemetriaCLPLTQ` consulta alarmes, leituras e histórico em um simulador com 17 equipamentos. `DocumentacaoPlantaLTQ` interpreta códigos e tags e busca referências por equipamento. Ambos funcionam independentemente de `ManualManutencaoLTQ`, que continua consultando o documento SKF configurado.
+```bash
+pnpm run build
+pnpm start --hostname 127.0.0.1 --port 3002
+```
 
-1. Na raiz, com Python 3.11 ou superior, instale os serviços:
+Em outro terminal:
 
-   ```sh
-   python3 -m venv planta-mcp/.venv
-   planta-mcp/.venv/bin/pip install ./planta-mcp
-   ```
+```bash
+ngrok http 3002
+```
 
-2. Gere um segredo com `openssl rand -hex 32` e defina o mesmo `PLANTA_MCP_TOKEN` em `.env.local` e no ambiente dos dois processos Python.
-3. Em dois terminais, rode `planta-mcp/.venv/bin/planta-mcp telemetria` e `planta-mcp/.venv/bin/planta-mcp documentacao`. Os serviços escutam em loopback nas portas 8011 e 8012. Mantenha-os no mesmo host que o Next.js.
-4. Configure `AGORA_ANNOTATION_ORIGIN` com a origem HTTPS pública do Next.js e inicie uma nova chamada após reiniciar o app. O Agora recebe os endpoints `/api/planta/telemetria` e `/api/planta/documentacao` com autenticação Bearer. Deixar o token vazio desativa os dois na voz.
-5. Teste “Quais alarmes estão ativos na F5?”, “O que a tag AI012 mede?” e “Como essa variável mudou na última hora?”. As leituras são simuladas.
+Abra a URL HTTPS emitida no celular e aceite a página informativa do ngrok. Câmera e microfone têm permissões e controles separados. Para ferramentas de voz, configure essa origem em `AGORA_ANNOTATION_ORIGIN`, reinicie o servidor e inicie uma nova chamada. Mantenha servidor e túnel ativos; alterações de código exigem novo build e reinício. O endereço do túnel é temporário.
 
-### Postmortem automático da chamada
+Esse fluxo usa o build de produção para evitar bloqueios de recursos do runtime de desenvolvimento por uma origem externa não configurada.
 
-Ao encerrar uma nova chamada, a POC gera em segundo plano um relatório em português com identificação, resumo, contexto, linha do tempo, evidências, análise, desfecho, próximas ações, qualidade técnica e limitações. O painel inicial mostra o andamento e os nomes dos arquivos. Os arquivos Markdown e JSON ficam em `files/postmortems/`, fora de `public/` e ignorados pelo Git. O JSON inclui as evidências e a versão do formato. Relatórios existentes devem permanecer privados; a POC agora armazena texto da conversa nessa pasta.
+## Desenvolvimento e verificação
 
-O navegador envia falas concluídas e interrompidas a cada segundo e antes do encerramento. O servidor reúne resultados do manual, análises visuais sem imagens, consultas aos MCPs simulados da planta e diagnósticos. Os horários representam recebimento, não o instante exato da fala. A análise cita os identificadores das falas e eventos e separa relatos, hipóteses e fatos; terminar a ligação não confirma resolução. Resultados de ferramentas ainda pendentes ao encerrar não são aguardados nem incorporados depois. A coleta limita cada sessão a 300 falas, 500 eventos e 160 mil caracteres; limites atingidos são indicados no relatório. Cada fala é limitada a 5 mil caracteres.
+| Comando | Finalidade |
+| --- | --- |
+| `pnpm run dev` | Servidor de desenvolvimento. |
+| `pnpm run doctor` | Pré-requisitos locais e presença das duas credenciais Agora. |
+| `pnpm run lint` | ESLint. |
+| `pnpm run typecheck` | Verificação TypeScript. |
+| `pnpm run verify:api` | Contratos de API, incluindo postmortems com provedores simulados e diretório temporário. |
+| `pnpm run build` | Build de produção. |
+| `pnpm run verify` | Doctor, lint, typecheck, contratos de API e build. |
 
-A análise reutiliza `OPENAI_API_KEY`, com `FEITA_API_KEY` como fallback. `OPENAI_POSTMORTEM_MODEL` é opcional; por padrão usa `OPENAI_RAG_MODEL` ou `gpt-5.4-mini`. O modelo Feita continua configurado por `FEITA_MODEL`. As evidências coletadas são enviadas ao provedor para a análise. Sem provedor ou em caso de falha, os arquivos ainda são salvos como relatório básico, com as evidências e um aviso. O botão **Tentar gerar novamente** permite até duas novas gerações para relatórios básicos ou falhos enquanto a sessão estiver disponível.
+Execute `pnpm run verify` antes de entregar alterações no runtime. `doctor` e `verify` exigem `.env.local` preenchido, sem iniciar uma chamada real; lint, typecheck, contratos e build podem rodar sem credenciais reais. Testar áudio, interrupções, câmera e ferramentas exige uma validação de ponta a ponta em uma chamada.
 
-Para testar, atualize o servidor, recarregue a página e inicie uma chamada nova. Relate um problema, consulte uma ferramenta e clique em **Encerrar conversa**. Aguarde **Postmortem salvo** e abra os arquivos na pasta. Chamadas iniciadas antes da atualização não possuem a capacidade de coleta.
+### Mapa do repositório
 
-O fechamento da página tenta finalizar com `keepalive`; se o navegador não entregar essa requisição, a ausência de heartbeat por dois minutos dispara o relatório como perda de conexão (inclusive quando o navegador suspende uma aba). Essa indicação não comprova que o agente Agora parou. A fila é local, com até dois geradores simultâneos, e requer um único processo Next.js continuamente ativo e disco gravável; reiniciar o processo perde coletas e jobs em memória. Antes de chamar a IA, o job salva o JSON das evidências, que pode ficar com status `generating` se o processo cair. Após uma hora do encerramento, a capacidade de consultar/repetir expira; os arquivos continuam no disco. Esse armazenamento não é adequado ao filesystem efêmero/serverless do Vercel. O Langfuse continua sem transcrições, documentos ou imagens.
+```text
+app/
+  page.tsx                    Workspace visual
+  voice/                      Experiência de voz independente
+  api/                        Tokens, agente, visão, pesquisa, planta e relatórios
+components/                   Interface e ciclo de vida RTC/RTM
+lib/                          Busca, provedores, visão, observabilidade e postmortem
+planta-mcp/                   Serviços Python e catálogo da planta simulada
+public/                       Vídeo LTQ, modelos de detecção e recursos visuais
+ops/langfuse/                 Infraestrutura local de observabilidade
+scripts/                      Doctor e verificações de contratos
+docs/ai/                      Contexto técnico e contratos da base Agora
+```
+
+O prompt e os modelos de voz ficam em [`app/api/invite-agent/route.ts`](app/api/invite-agent/route.ts). A base mantém exemplos comentados de BYOK para Deepgram (`NEXT_DEEPGRAM_API_KEY`), LLM compatível com OpenAI (`NEXT_LLM_URL`, `NEXT_LLM_API_KEY`) e ElevenLabs (`NEXT_ELEVENLABS_API_KEY`, `NEXT_ELEVENLABS_VOICE_ID`). Esses caminhos exigem alterações explícitas no código. A rota `/api/chat/completions` é um proxy SSE opcional, sem uso no pipeline padrão.
+
+### Solução de problemas
+
+| Sintoma | O que verificar |
+| --- | --- |
+| Agente não entra ou transcrição não aparece | Credenciais, serviços habilitados e `agora project doctor --deep`, se a CLI estiver instalada. |
+| `doctor` falha | Node.js 22+, execução via pnpm e valores obrigatórios no `.env.local`. |
+| Login RTM falha | A emissão de tokens deve preservar `RtcTokenBuilder.buildTokenWithRtm`. |
+| Microfone/câmera bloqueados | Permissões do navegador, localhost/HTTPS e teste direto em `/voice`. |
+| Ferramenta não está disponível | Variáveis do recurso, origem HTTPS acessível e nova chamada após reiniciar. |
+| MCPs da planta não respondem | Processos Python ativos no mesmo host e o mesmo token nos três processos. |
+| Relatório básico ou incompleto | Provedor disponível, aviso no painel, limites de coleta e continuidade do processo Node.js. |
+
+## Implantação, privacidade e limites
+
+A experiência básica de voz pode ser implantada como uma aplicação Next.js no Vercel com as duas variáveis Agora. **O conjunto completo desta POC requer um único processo Node.js persistente e disco gravável**: visão, pesquisa e coleta usam estado em memória, e os postmortems são arquivos locais. Os MCPs Python também precisam estar acessíveis no mesmo host. Filas e arquivos locais não são adequados a uma implantação serverless efêmera.
+
+As rotas básicas de token, convite e encerramento ainda não têm autenticação de usuário ou isolamento por organização. Ferramentas e relatórios usam capacidades específicas de sessão e limites, mas uma implantação operacional exige autenticação, autorização e persistência durável.
+
+Mantenha credenciais no servidor, documentos em `.rag/` ou outro caminho privado e relatórios fora de `public/`. O teste de pessoas é local; compartilhar câmera envia vídeo ao Agora, e solicitar análise pode enviar um quadro ao provedor configurado. A indexação pode enviar trechos do manual à OpenAI, e a geração de relatórios envia evidências da conversa ao provedor. Use material autorizado para a demonstração e defina a retenção dos arquivos privados.
+
+## Origem, contribuição e licença
+
+Este projeto deriva do [Agora Conversational AI Next.js Quickstart](https://github.com/AgoraIO-Conversational-AI/agent-quickstart-nextjs). A integração RTC/RTM, os contratos básicos de sessão e os cuidados de ciclo de vida React da base foram preservados.
+
+Para contribuir, consulte [`CONTRIBUTING.md`](CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md), o [cartão do repositório](docs/ai/L0_repo_card.md) e o [contrato da receita base](docs/ai/RECIPE.md).
+
+Distribuído sob a [licença MIT](LICENSE), preservando os avisos de copyright da base. Recursos de terceiros mantêm suas respectivas atribuições.
