@@ -1,0 +1,19 @@
+[project]
+name = "planta-mcp"
+version = "0.1.0"
+description = "Servidor MCP: usina exemplo — laminação de tiras a quente (dados fictícios)"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.26,<2"]
+
+[project.scripts]
+planta-mcp = "planta_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["planta_mcp"]
+
+[tool.setuptools.package-data]
+planta_mcp = ["referencia/*.md"]
